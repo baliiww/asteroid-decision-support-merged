@@ -42,10 +42,45 @@ from tracker_core import run_tracking_pipeline
 
 SAMPLE_ASSET_SPACE = "balimyabaci/asteroid-decision-support-system"
 MODEL_ASSET_SPACE = "omertugrulbayram/asteroid-decision-support"
+GITHUB_RAW_BASE = "https://raw.githubusercontent.com/baliiww/asteroid-decision-support-merged/main"
+
+
+def _download_github_asset(filename):
+    """Fetch a known public project asset into /tmp and reuse it for this Space session."""
+    from urllib.request import urlopen
+    cache_dir = Path(tempfile.gettempdir()) / "asteroid_merged_assets"
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    target = cache_dir / filename
+    if target.exists() and target.stat().st_size > 1024:
+        return str(target)
+    tmp = target.with_suffix(target.suffix + ".part")
+    with urlopen(f"{GITHUB_RAW_BASE}/{filename}", timeout=90) as src, open(tmp, "wb") as dst:
+        shutil.copyfileobj(src, dst)
+    tmp.replace(target)
+    return str(target)
+
+
+def _is_valid_fits(path):
+    try:
+        with open(path, "rb") as fh:
+            return fh.read(6) == b"SIMPLE"
+    except Exception:
+        return False
+
+
+def ensure_sample_fits(filename):
+    """Use the bundled FITS only when it is a real FITS file; otherwise recover from GitHub."""
+    local = Path(filename)
+    if local.exists() and _is_valid_fits(local):
+        return str(local)
+    recovered = _download_github_asset(filename)
+    if not _is_valid_fits(recovered):
+        raise OSError(f"{filename} could not be recovered as a valid FITS file")
+    return recovered
 
 
 def ensure_space_asset(repo_id, filename):
-    """Use a local asset when present; otherwise fetch the public file from its source Space."""
+    """Use a local asset when present; otherwise fetch it from its source Space."""
     local = Path(filename)
     if local.exists():
         return str(local)
@@ -61,8 +96,12 @@ AI = None
 AI_LOAD_ERROR = None
 try:
     import joblib
-    model_path = ensure_space_asset(MODEL_ASSET_SPACE, "realbogus_model.joblib")
-    AI = joblib.load(model_path)
+    try:
+        model_path = ensure_space_asset(MODEL_ASSET_SPACE, "realbogus_model.joblib")
+        AI = joblib.load(model_path)
+    except Exception:
+        model_path = _download_github_asset("realbogus_model.joblib")
+        AI = joblib.load(model_path)
 except Exception as exc:
     AI_LOAD_ERROR = f"{type(exc).__name__}: {exc}"
     AI = None
@@ -653,7 +692,7 @@ def select_candidate(choice, state):
 
 def analyze_sample():
     try:
-        paths = [ensure_space_asset(SAMPLE_ASSET_SPACE, f) for f in pc.DEFAULT_FILES]
+        paths = [ensure_sample_fits(f) for f in pc.DEFAULT_FILES]
     except Exception as exc:
         base = (None, gr.update(choices=[], value=None),
                 "<div class='crit-card'>Sample FITS could not be loaded.</div>",
