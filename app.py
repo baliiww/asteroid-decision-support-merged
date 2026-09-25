@@ -434,8 +434,9 @@ def known_object_labels(records, wcs, ref):
         from astropy.time import Time
         from astropy.coordinates import SkyCoord
         import astropy.units as u
-        center = wcs.pixel_to_world(ref["data"].shape[1] / 2,
-                                    ref["data"].shape[0] / 2)
+        ref_shape = tuple(ref.get("shape") or ref["data"].shape)
+        center = wcs.pixel_to_world(ref_shape[1] / 2,
+                                    ref_shape[0] / 2)
         sb = Skybot.cone_search(center, 0.2 * u.deg,
                                 Time(ref["mjd"], format="mjd"), location="F51")
         known = SkyCoord(sb["RA"], sb["DEC"])
@@ -487,10 +488,11 @@ def analyze_core(files, reference_map=None, out_dir=None):
         r["rank"] = i
 
     ref_frame = result["frames"][result["ref_index"]]
-    known_map, known_status = known_object_labels(records, wcs, ref_frame)
+    # Do not block the first result paint on the external SkyBoT service.
+    # Catalogue enrichment runs as a chained second step after the analysis UI is visible.
     for r in records:
-        r["known"] = known_map.get(r["rank"])
-        r["known_status"] = known_status
+        r["known"] = None
+        r["known_status"] = "off"
 
     matched_rank, matched_distance = match_reference_candidate(records, frames, reference_map)
 
@@ -510,10 +512,7 @@ def analyze_core(files, reference_map=None, out_dir=None):
         choices.append(label); choice_by_rank[r["rank"]] = label
 
     high = [r for r in records if r["likelihood"] >= 60]
-    new_high = [r for r in high if r.get("known_status") == "on" and not r.get("known") and r["crit"]["overall"]]
-    cat_note = ""
-    if records and records[0].get("known_status") == "on":
-        cat_note = f" Catalogue check done; potential NEW (high-likelihood, not catalogued): {len(new_high)}."
+    cat_note = " Catalogue check continues in the background after these results appear."
     match_note = ""
     if reference_map:
         if matched_rank is not None:
@@ -540,8 +539,15 @@ def analyze_core(files, reference_map=None, out_dir=None):
                          f"{e.get('ra_deg','')},{e.get('dec_deg','')},{e.get('ra_hms','')},{e.get('dec_dms','')},"
                          f"{d['snr']:.1f},{rate},{pa},{r['prob']}\n")
 
+    header_keys = ["CRPIX1", "CRPIX2", "CRVAL1", "CRVAL2", "CDELT1", "CDELT2",
+                   "CTYPE1", "CTYPE2", "CROTA1", "CROTA2"]
+    catalog_header = {k: ref_hdr[k] for k in header_keys if k in ref_hdr}
+    initial_summary = summary + "\n\n" + result["log"]
     state = {"out_dir": str(out_dir), "records": records, "frame_cache": frame_cache,
-             "panels": {r["rank"]: (criteria_html(r), coord_rows(r)) for r in records}}
+             "panels": {r["rank"]: (criteria_html(r), coord_rows(r)) for r in records},
+             "catalog_ctx": {"header": catalog_header, "mjd": ref_frame.get("mjd"),
+                             "shape": list(ref_frame["data"].shape)},
+             "summary_base": initial_summary, "csv_path": str(csv_path)}
 
     initial_rank = matched_rank if matched_rank in choice_by_rank else (records[0]["rank"] if records else None)
     initial_choice = choice_by_rank.get(initial_rank)
@@ -554,7 +560,75 @@ def analyze_core(files, reference_map=None, out_dir=None):
         first_coords, first_stamp, first_motion, first_chart = [], None, None, None
 
     return (gif, gr.update(choices=choices, value=initial_choice), first_html, first_coords,
-            first_stamp, first_motion, first_chart, summary + "\n\n" + result["log"], state, str(csv_path))
+            first_stamp, first_motion, first_chart, initial_summary, state, str(csv_path))
+
+
+def _selected_record(choice, records):
+    if not records:
+        return None
+    if choice:
+        try:
+            rank = int(str(choice).split("#")[1].split(" ")[0])
+            found = next((r for r in records if r["rank"] == rank), None)
+            if found is not None:
+                return found
+        except Exception:
+            pass
+    return records[0]
+
+
+def _rewrite_candidates_csv(state):
+    csv_path = Path(state.get("csv_path") or (Path(state["out_dir"]) / "candidates.csv"))
+    with open(csv_path, "w", encoding="utf-8") as fp:
+        fp.write("rank,likelihood,catalogue,frame,file,mjd,x,y,ra_deg,dec_deg,ra_hms,dec_dms,snr,rate_arcsec_min,pa_deg,ml_real_prob\n")
+        for r in state.get("records", []):
+            astro = r.get("astro")
+            emap = {e["frame"]: e for e in astro["epochs"]} if astro else {}
+            rate = astro["rate_arcsec_min"] if astro else r["crit"]["rate_arcsec_min"]
+            pa = astro["pa_deg"] if astro else r["crit"]["pa_pixel_deg"]
+            cat = r.get("known") or ("not_catalogued" if r.get("known_status") == "on" else "")
+            for k in r["order"]:
+                d = r["cand"]["detections"][k]; e = emap.get(k, {})
+                fp.write(f"{r['rank']},{r['likelihood']},{cat},{k},{d['name']},{d.get('mjd')},{d['x']:.2f},{d['y']:.2f},"
+                         f"{e.get('ra_deg','')},{e.get('dec_deg','')},{e.get('ra_hms','')},{e.get('dec_dms','')},"
+                         f"{d['snr']:.1f},{rate},{pa},{r['prob']}\n")
+    state["csv_path"] = str(csv_path)
+    return str(csv_path)
+
+
+def run_catalog_check(choice, state):
+    """Enrich already-rendered candidates after first paint; never blocks core detection."""
+    if not state or not state.get("records"):
+        return "<div class='crit-card'>No candidates to check.</div>", "", state or {}, None
+
+    ctx = state.get("catalog_ctx") or {}
+    try:
+        header = fits.Header(ctx.get("header") or {})
+        wcs = astrometry.repair_wcs(header)
+        ref = {"mjd": ctx.get("mjd"), "shape": tuple(ctx.get("shape") or ())}
+        labels, status = known_object_labels(state["records"], wcs, ref)
+    except Exception:
+        labels, status = ({r["rank"]: None for r in state["records"]}, "off")
+
+    for r in state["records"]:
+        r["known"] = labels.get(r["rank"])
+        r["known_status"] = status
+
+    state["panels"] = {r["rank"]: (criteria_html(r), coord_rows(r)) for r in state["records"]}
+    selected = _selected_record(choice, state["records"])
+    html = criteria_html(selected) if selected else "<div class='crit-card'>No candidate selected.</div>"
+
+    high = [r for r in state["records"] if r["likelihood"] >= 60 and r["crit"]["overall"]]
+    known_n = sum(1 for r in state["records"] if r.get("known"))
+    new_n = sum(1 for r in high if status == "on" and not r.get("known"))
+    base = state.get("summary_base", "")
+    if status == "on":
+        cat_line = f"\n\nCatalogue check completed: {known_n} candidate(s) matched known objects; {new_n} high-likelihood candidate(s) were not matched in the query."
+    else:
+        cat_line = "\n\nCatalogue check unavailable; core detection, IASC criteria and RandomForest results are unchanged."
+    summary = base.replace(" Catalogue check continues in the background after these results appear.", "") + cat_line
+    csv_path = _rewrite_candidates_csv(state)
+    return html, summary, state, csv_path
 
 
 def analyze_uploaded(files):
@@ -796,8 +870,13 @@ discoveries; it prioritises candidates and presents them for human verification.
     common_outputs = [gif_out, cand_sel, crit_out, coords_out, stamp_out,
                       motion_out, chart_out, summary_out, st, csv_out,
                       sample_panel, sample_info, sample_gif, sample_coords, sample_motion, sample_chart]
-    analyze_btn.click(analyze_uploaded, inputs=files_in, outputs=common_outputs)
-    sample_btn.click(analyze_sample, inputs=[], outputs=common_outputs)
+    analyze_evt = analyze_btn.click(analyze_uploaded, inputs=files_in, outputs=common_outputs)
+    sample_evt = sample_btn.click(analyze_sample, inputs=[], outputs=common_outputs)
+    # First paint is fast; the external catalogue query enriches the same result afterwards.
+    analyze_evt.then(run_catalog_check, inputs=[cand_sel, st],
+                     outputs=[crit_out, summary_out, st, csv_out])
+    sample_evt.then(run_catalog_check, inputs=[cand_sel, st],
+                    outputs=[crit_out, summary_out, st, csv_out])
     cand_sel.change(select_candidate, inputs=[cand_sel, st],
                     outputs=[crit_out, coords_out, stamp_out, motion_out, chart_out])
 
