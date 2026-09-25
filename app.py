@@ -921,7 +921,10 @@ UI_EN_JS = r"""
     ["Dosyaları seç", "Choose files"],
     ["İptal", "Cancel"],
     ["Temizle", "Clear"],
-    ["İndir", "Download"]
+    ["İndir", "Download"],
+    ["API üzerinden kullan", "Use via API"],
+    ["Gradio ile oluşturulmuştur", "Built with Gradio"],
+    ["Ayarlar", "Settings"]
   ]);
 
   const translateLeafText = (root) => {
