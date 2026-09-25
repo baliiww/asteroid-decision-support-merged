@@ -40,16 +40,6 @@ import pipeline_core_en as pc
 import astrometry
 from tracker_core import run_tracking_pipeline
 
-# --- AI modeli (opsiyonel) ---
-AI = None
-try:
-    import joblib
-    model_path = ensure_space_asset(MODEL_ASSET_SPACE, "realbogus_model.joblib")
-    AI = joblib.load(model_path)
-except Exception:
-    AI = None
-
-
 SAMPLE_ASSET_SPACE = "balimyabaci/asteroid-decision-support-system"
 MODEL_ASSET_SPACE = "omertugrulbayram/asteroid-decision-support"
 
@@ -63,6 +53,19 @@ def ensure_space_asset(repo_id, filename):
     cached = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="space")
     shutil.copy2(cached, local)
     return str(local)
+
+
+# --- AI modeli (opsiyonel) ---
+# Constants + asset helper must be defined before model loading.
+AI = None
+AI_LOAD_ERROR = None
+try:
+    import joblib
+    model_path = ensure_space_asset(MODEL_ASSET_SPACE, "realbogus_model.joblib")
+    AI = joblib.load(model_path)
+except Exception as exc:
+    AI_LOAD_ERROR = f"{type(exc).__name__}: {exc}"
+    AI = None
 
 
 TITLE = "AI-Assisted Decision Support System for Asteroid Search Processes"
@@ -519,7 +522,7 @@ def analyze_core(files, reference_map=None, out_dir=None):
             match_note = " Reference 2024 WZ53 demo is shown, but the seedless detector did not produce a confident path match; no other candidate is relabelled as WZ53."
     summary = (f"{len(records)} moving candidates found, ranked by asteroid likelihood "
                f"(high-likelihood: {len(high)}).{cat_note} "
-               f"{'RandomForest real/bogus model active.' if AI else 'No ML model loaded (criteria-only fallback).'}"
+               f"{'RandomForest real/bogus model active.' if AI else 'No ML model loaded (criteria-only fallback' + (f': {AI_LOAD_ERROR}' if AI_LOAD_ERROR else '') + ').'}"
                f"{match_note} No candidate is discarded; the final decision rests with a human.")
 
     csv_path = Path(out_dir) / "candidates.csv"
