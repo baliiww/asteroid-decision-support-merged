@@ -33,15 +33,10 @@ jobs:
           if not token:
               raise SystemExit("HF_TOKEN GitHub Actions secret is missing.")
 
-          repo_id = "balimyabaci/asteroid-decision-support-merged"
+          repo_id = "balimyabaci/asteroid-decision-support-system"
           api = HfApi(token=token)
-          api.create_repo(
-              repo_id=repo_id,
-              repo_type="space",
-              space_sdk="gradio",
-              private=False,
-              exist_ok=True,
-          )
+          # New Space creation returned HTTP 402 on this account, so deploy to the
+          # existing project Space. Hugging Face keeps commit history, so this is reversible.
           api.upload_folder(
               repo_id=repo_id,
               repo_type="space",
