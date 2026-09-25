@@ -1,0 +1,20 @@
+name: Hugging Face Runtime Logs
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  logs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Install Hugging Face Hub client
+        run: pip install "huggingface_hub>=0.30"
+
+      - name: Fetch current Space run logs
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          hf spaces logs balimyabaci/asteroid-decision-support-system -n 300 --token "$HF_TOKEN"
