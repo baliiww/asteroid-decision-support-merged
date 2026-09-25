@@ -420,6 +420,32 @@ def load_cached_frames(meta):
     return frames
 
 
+def match_reference_raw_candidate(candidates, frames, reference_map, max_median_px=30.0):
+    """Find the seedless raw candidate that follows the known WZ53 reference path.
+    Used only in sample mode so criteria/ML/astrometry are computed for WZ53 alone."""
+    if not reference_map or not candidates:
+        return None, None
+    frame_by_name = {f["name"]: f for f in frames}
+    best_cand, best_med = None, None
+    for cand in candidates:
+        ds = []
+        for k in cand["order"]:
+            d = cand["detections"][k]
+            name = d["name"]
+            if name not in reference_map or name not in frame_by_name:
+                continue
+            rx, ry = reference_map[name]
+            dy, dx = frame_by_name[name].get("shift_yx", (0.0, 0.0))
+            ds.append(float(np.hypot(d["x"] - (rx + dx), d["y"] - (ry + dy))))
+        if len(ds) >= 3:
+            med = float(np.median(ds))
+            if best_med is None or med < best_med:
+                best_cand, best_med = cand, med
+    if best_med is None or best_med > max_median_px:
+        return None, best_med
+    return best_cand, best_med
+
+
 def match_reference_candidate(records, frames, reference_map, max_median_px=30.0):
     """Match the reference WZ53 path to a seedless candidate only after discovery."""
     if not reference_map or not records:
@@ -511,7 +537,16 @@ def analyze_core(files, reference_map=None, out_dir=None, only_reference=False):
     records = []
     ref_hdr = result["frames"][result["ref_index"]]["header"]
     wcs = astrometry.repair_wcs(ref_hdr)
-    for cand in result["candidates"]:
+
+    candidates_to_analyse = result["candidates"]
+    raw_match_distance = None
+    if only_reference and reference_map:
+        wz53_cand, raw_match_distance = match_reference_raw_candidate(
+            result["candidates"], frames, reference_map
+        )
+        candidates_to_analyse = [wz53_cand] if wz53_cand is not None else []
+
+    for cand in candidates_to_analyse:
         prob = ai_prob(cand, shape)
         lk, crit = pc.asteroid_likelihood(cand, shape, pixscale, ai_prob=prob)
         points = {k: (cand["detections"][k]["x"], cand["detections"][k]["y"])
@@ -534,17 +569,8 @@ def analyze_core(files, reference_map=None, out_dir=None, only_reference=False):
         r["known_status"] = "off"
 
     matched_rank, matched_distance = match_reference_candidate(records, frames, reference_map)
-
-    # In the built-in 2024 WZ53 sample, analyse ONLY the known sample target.
-    # The seedless detector still discovers candidates independently; after discovery,
-    # we keep only the path that matches the reference WZ53 trajectory.
-    if only_reference and reference_map:
-        matched = next((r for r in records if r["rank"] == matched_rank), None)
-        if matched is not None:
-            records = [matched]
-            matched_rank = matched["rank"]
-        else:
-            records = []
+    if only_reference and matched_distance is None:
+        matched_distance = raw_match_distance
 
     if out_dir is None:
         out_dir = tempfile.mkdtemp(prefix="ast_merged_")
