@@ -671,8 +671,14 @@ def run_catalog_check(choice, state):
 
 
 def analyze_uploaded(files):
-    base = analyze_core(files)
-    return base + (gr.update(visible=False), None, None, [], None, None)
+    base = list(analyze_core(files))
+    # Reset the primary preview to the normal seedless-candidate blink for uploaded data.
+    if base[0]:
+        base[0] = gr.update(
+            value=base[0],
+            label="Blink — candidates (green=high, yellow=medium, red=low likelihood)"
+        )
+    return tuple(base) + (gr.update(visible=False), None, None, [], None, None)
 
 
 def select_candidate(choice, state):
@@ -708,11 +714,14 @@ def analyze_sample():
                "info": f"<div class='crit-card'>Reference demo could not be generated: {exc}</div>",
                "reference_map": {}, "log": f"Reference demo error: {exc}"}
     base = analyze_core(paths, reference_map=ref.get("reference_map"), out_dir=out_dir)
-    # Put reference-demo log after the seedless log without changing its decision process.
+    # Sample mode is ONE unified flow: the main preview shows the original
+    # 2024 WZ53 marked blink immediately, while the seedless + IASC + ML
+    # candidate evaluation continues below. Do not render a second demo panel.
     base = list(base)
+    if ref.get("gif"):
+        base[0] = gr.update(value=ref.get("gif"), label="2024 WZ53 — marked blink")
     base[7] = base[7] + "\n\n--- 2024 WZ53 REFERENCE DEMO ---\n" + ref.get("log", "")
-    return tuple(base) + (gr.update(visible=True), ref.get("info"), ref.get("gif"),
-                          ref.get("coords", []), ref.get("motion"), ref.get("chart"))
+    return tuple(base) + (gr.update(visible=False), None, None, [], None, None)
 
 
 CSS = """
@@ -866,17 +875,15 @@ with gr.Blocks(title=TITLE, theme=gr.themes.Soft(primary_hue="blue"), css=CSS) a
             gif_out = gr.Image(label="Blink — candidates (green=high, yellow=medium, red=low likelihood)",
                                type="filepath", height=520)
 
+    # Kept as hidden compatibility outputs for the existing event signature.
+    # Sample mode no longer renders a separate reference-demo section.
     with gr.Column(visible=False) as sample_panel:
-        gr.Markdown("## 2024 WZ53 Reference Demo")
-        with gr.Row():
-            sample_gif = gr.Image(label="2024 WZ53 — marked blink", type="filepath", height=430)
-            sample_info = gr.HTML(value="")
+        sample_info = gr.HTML(value="")
+        sample_gif = gr.Image(type="filepath")
         sample_coords = gr.Dataframe(
-            headers=["frame", "file", "x", "y", "snr", "flux"],
-            label="2024 WZ53 reference coordinates", interactive=False)
-        with gr.Row():
-            sample_motion = gr.Image(label="2024 WZ53 — Motion Trace", type="filepath", height=360)
-            sample_chart = gr.Image(label="2024 WZ53 — Coordinate Change", type="filepath", height=360)
+            headers=["frame", "file", "x", "y", "snr", "flux"], interactive=False)
+        sample_motion = gr.Image(type="filepath")
+        sample_chart = gr.Image(type="filepath")
 
     gr.Markdown("## Candidate Evaluation (IASC criteria + AI)")
     with gr.Row():
