@@ -1,6 +1,8 @@
 name: Deploy to Hugging Face Space
 
 on:
+  push:
+    branches: [main]
   workflow_dispatch:
 
 jobs:
