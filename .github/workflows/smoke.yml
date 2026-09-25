@@ -1,0 +1,38 @@
+name: Smoke Test
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Compile Python files
+        run: |
+          python -m py_compile app.py pipeline_core_en.py pipeline_core.py tracker_core.py astrometry.py ai_train.py
+
+      - name: Import app and verify ML model
+        run: |
+          python - <<'PY'
+          import app
+          assert app.AI is not None, f"ML model failed to load: {app.AI_LOAD_ERROR}"
+          print("App import OK")
+          print("RandomForest model active")
+          print("Features:", app.AI.get("features"))
+          PY
