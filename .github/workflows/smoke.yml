@@ -42,13 +42,15 @@ jobs:
           python - <<'PY'
           import time
           import app
+          # Benchmark the initial UX without blocking on the external SkyBoT catalogue.
+          app.known_object_labels = lambda records, wcs, ref: ({r["rank"]: None for r in records}, "off")
           t0 = time.perf_counter()
           out = app.analyze_sample()
           elapsed = time.perf_counter() - t0
           assert isinstance(out, tuple), type(out)
           assert len(out) == 16, f"Expected 16 UI outputs, got {len(out)}"
           assert isinstance(out[8], dict), "Analysis state missing"
-          print(f"SAMPLE_E2E_OK elapsed={elapsed:.2f}s")
+          print(f"SAMPLE_NO_CATALOG_OK elapsed={elapsed:.2f}s")
           print("SUMMARY:", str(out[7])[:1000])
           print("CANDIDATES:", len(out[8].get("records", [])))
           PY
