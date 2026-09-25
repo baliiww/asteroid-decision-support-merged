@@ -889,7 +889,95 @@ button.primary, .gradio-container button.primary{
 button.primary:hover{ filter:brightness(1.08); transform:translateY(-1px); }
 """
 
-with gr.Blocks(title=TITLE, theme=gr.themes.Soft(primary_hue="blue"), css=CSS) as demo:
+UI_EN_JS = r"""
+() => {
+  document.documentElement.lang = "en";
+
+  const translations = new Map([
+    ["Dosyayı buraya sürükle", "Drop files here"],
+    ["Dosyaları buraya sürükle", "Drop files here"],
+    ["- veya -", "- or -"],
+    ["veya", "or"],
+    ["Yüklemek için tıkla", "Click to upload"],
+    ["Yüklemek için tıklayın", "Click to upload"],
+    ["Dosya yükle", "Upload file"],
+    ["Dosyaları yükle", "Upload files"],
+    ["Dosya seç", "Choose file"],
+    ["Dosyaları seç", "Choose files"],
+    ["İptal", "Cancel"],
+    ["Temizle", "Clear"],
+    ["İndir", "Download"]
+  ]);
+
+  const translateLeafText = (root) => {
+    if (!root) return;
+    const walker = document.createTreeWalker(
+      root,
+      NodeFilter.SHOW_TEXT,
+      {
+        acceptNode(node) {
+          const parent = node.parentElement;
+          if (!parent) return NodeFilter.FILTER_REJECT;
+          if (["SCRIPT", "STYLE", "CODE", "PRE"].includes(parent.tagName)) {
+            return NodeFilter.FILTER_REJECT;
+          }
+          return NodeFilter.FILTER_ACCEPT;
+        }
+      }
+    );
+
+    const nodes = [];
+    while (walker.nextNode()) nodes.push(walker.currentNode);
+
+    for (const node of nodes) {
+      const raw = node.nodeValue || "";
+      const trimmed = raw.trim();
+      if (!trimmed) continue;
+
+      if (translations.has(trimmed)) {
+        const leading = raw.match(/^\s*/)?.[0] || "";
+        const trailing = raw.match(/\s*$/)?.[0] || "";
+        node.nodeValue = leading + translations.get(trimmed) + trailing;
+      }
+    }
+
+    root.querySelectorAll?.("[aria-label],[title],[placeholder]").forEach((el) => {
+      for (const attr of ["aria-label", "title", "placeholder"]) {
+        const value = el.getAttribute(attr);
+        if (value && translations.has(value.trim())) {
+          el.setAttribute(attr, translations.get(value.trim()));
+        }
+      }
+    });
+  };
+
+  const applyEnglish = () => translateLeafText(document.body);
+  applyEnglish();
+
+  const observer = new MutationObserver((mutations) => {
+    for (const mutation of mutations) {
+      mutation.addedNodes.forEach((node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) translateLeafText(node);
+        else if (node.nodeType === Node.TEXT_NODE && node.parentElement) {
+          translateLeafText(node.parentElement);
+        }
+      });
+    }
+    applyEnglish();
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    characterData: true
+  });
+
+  // Gradio can hydrate the uploader after the initial page load.
+  [250, 750, 1500, 3000].forEach((ms) => setTimeout(applyEnglish, ms));
+}
+"""
+
+with gr.Blocks(title=TITLE, theme=gr.themes.Soft(primary_hue="blue"), css=CSS, js=UI_EN_JS) as demo:
     st = gr.State({})
 
     gr.HTML(f"""
