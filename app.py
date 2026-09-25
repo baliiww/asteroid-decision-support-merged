@@ -652,7 +652,7 @@ def analyze_core(files, reference_map=None, out_dir=None, only_reference=False):
 def _selected_record(choice, records):
     if not records:
         return None
-    if choice:
+    if choice and "#" in str(choice):
         try:
             rank = int(str(choice).split("#")[1].split(" ")[0])
             found = next((r for r in records if r["rank"] == rank), None)
@@ -660,6 +660,7 @@ def _selected_record(choice, records):
                 return found
         except Exception:
             pass
+    # Sample mode has a single WZ53 record and no "#N" in its label.
     return records[0]
 
 
@@ -731,13 +732,27 @@ def analyze_uploaded(files):
 def select_candidate(choice, state):
     if not state or "panels" not in state or not choice:
         return "<div class='crit-card'>Run analysis first.</div>", [], None, None, None
+
+    records = state.get("records", [])
+    rec = None
+
+    # Normal mode labels contain "Candidate #N".
+    # Sample mode deliberately shows only "2024 WZ53" with no candidate number.
     try:
-        rank = int(choice.split("#")[1].split(" ")[0])
+        if "#" in str(choice):
+            rank = int(str(choice).split("#")[1].split(" ")[0])
+            rec = next((r for r in records if r["rank"] == rank), None)
     except Exception:
-        return "<div class='crit-card'>Selection could not be parsed.</div>", [], None, None, None
-    rec = next((r for r in state.get("records", []) if r["rank"] == rank), None)
+        rec = None
+
+    # In the one-target WZ53 sample there is exactly one record, so use it directly.
+    if rec is None and len(records) == 1:
+        rec = records[0]
+
     if rec is None:
         return "<div class='crit-card'>Candidate not found.</div>", [], None, None, None
+
+    rank = rec["rank"]
     html, coords = state["panels"].get(rank, (criteria_html(rec), coord_rows(rec)))
     stamp, motion, chart = render_selected_assets(rec, state)
     return html, coords, stamp, motion, chart
