@@ -496,7 +496,7 @@ def known_object_labels(records, wcs, ref):
 
 
 
-def analyze_core(files, reference_map=None, out_dir=None):
+def analyze_core(files, reference_map=None, out_dir=None, only_reference=False):
     if not files or len(files) != 4:
         return (None, gr.update(choices=[], value=None),
                 "<div class='crit-card'>4 FITS files required.</div>",
@@ -535,6 +535,17 @@ def analyze_core(files, reference_map=None, out_dir=None):
 
     matched_rank, matched_distance = match_reference_candidate(records, frames, reference_map)
 
+    # In the built-in 2024 WZ53 sample, analyse ONLY the known sample target.
+    # The seedless detector still discovers candidates independently; after discovery,
+    # we keep only the path that matches the reference WZ53 trajectory.
+    if only_reference and reference_map:
+        matched = next((r for r in records if r["rank"] == matched_rank), None)
+        if matched is not None:
+            records = [matched]
+            matched_rank = matched["rank"]
+        else:
+            records = []
+
     if out_dir is None:
         out_dir = tempfile.mkdtemp(prefix="ast_merged_")
     Path(out_dir).mkdir(parents=True, exist_ok=True)
@@ -546,8 +557,11 @@ def analyze_core(files, reference_map=None, out_dir=None):
         rate = r["crit"]["rate_arcsec_min"]
         rate_s = f"{rate:.2f}\"/min" if rate else "—"
         mark = "✓ " if r["crit"]["overall"] else ""
-        wz = "★ 2024 WZ53 · " if r["rank"] == matched_rank else ""
-        label = f"{wz}{mark}Candidate #{r['rank']} — {r['likelihood']:.0f}% ({rate_s})"
+        if only_reference and r["rank"] == matched_rank:
+            label = f"★ 2024 WZ53 — {r['likelihood']:.0f}% ({rate_s})"
+        else:
+            wz = "★ 2024 WZ53 · " if r["rank"] == matched_rank else ""
+            label = f"{wz}{mark}Candidate #{r['rank']} — {r['likelihood']:.0f}% ({rate_s})"
         choices.append(label); choice_by_rank[r["rank"]] = label
 
     high = [r for r in records if r["likelihood"] >= 60]
@@ -558,10 +572,16 @@ def analyze_core(files, reference_map=None, out_dir=None):
             match_note = f" Reference 2024 WZ53 path matched seedless Candidate #{matched_rank} (median offset {matched_distance:.1f}px)."
         else:
             match_note = " Reference 2024 WZ53 demo is shown, but the seedless detector did not produce a confident path match; no other candidate is relabelled as WZ53."
-    summary = (f"{len(records)} moving candidates found, ranked by asteroid likelihood "
-               f"(high-likelihood: {len(high)}).{cat_note} "
-               f"{'RandomForest real/bogus model active.' if AI else 'No ML model loaded (criteria-only fallback' + (f': {AI_LOAD_ERROR}' if AI_LOAD_ERROR else '') + ').'}"
-               f"{match_note} No candidate is discarded; the final decision rests with a human.")
+    if only_reference:
+        summary = (f"2024 WZ53 sample target analysed with the seedless detection, IASC criteria and ML pipeline."
+                   f"{cat_note} "
+                   f"{'RandomForest real/bogus model active.' if AI else 'No ML model loaded (criteria-only fallback' + (f': {AI_LOAD_ERROR}' if AI_LOAD_ERROR else '') + ').'}"
+                   f"{match_note} The final decision remains human-reviewed.")
+    else:
+        summary = (f"{len(records)} moving candidates found, ranked by asteroid likelihood "
+                   f"(high-likelihood: {len(high)}).{cat_note} "
+                   f"{'RandomForest real/bogus model active.' if AI else 'No ML model loaded (criteria-only fallback' + (f': {AI_LOAD_ERROR}' if AI_LOAD_ERROR else '') + ').'}"
+                   f"{match_note} No candidate is discarded; the final decision rests with a human.")
 
     csv_path = Path(out_dir) / "candidates.csv"
     with open(csv_path, "w", encoding="utf-8") as fp:
@@ -598,7 +618,8 @@ def analyze_core(files, reference_map=None, out_dir=None):
         first_html = "<div class='crit-card'>No moving candidates found.</div>"
         first_coords, first_stamp, first_motion, first_chart = [], None, None, None
 
-    return (gif, gr.update(choices=choices, value=initial_choice), first_html, first_coords,
+    selector_label = "2024 WZ53 analysis" if only_reference else "Select candidate"
+    return (gif, gr.update(choices=choices, value=initial_choice, label=selector_label), first_html, first_coords,
             first_stamp, first_motion, first_chart, initial_summary, state, str(csv_path))
 
 
@@ -713,7 +734,7 @@ def analyze_sample():
         ref = {"gif": None, "coords": [], "motion": None, "chart": None,
                "info": f"<div class='crit-card'>Reference demo could not be generated: {exc}</div>",
                "reference_map": {}, "log": f"Reference demo error: {exc}"}
-    base = analyze_core(paths, reference_map=ref.get("reference_map"), out_dir=out_dir)
+    base = analyze_core(paths, reference_map=ref.get("reference_map"), out_dir=out_dir, only_reference=True)
     # Sample mode is ONE unified flow: the main preview shows the original
     # 2024 WZ53 marked blink immediately, while the seedless + IASC + ML
     # candidate evaluation continues below. Do not render a second demo panel.
