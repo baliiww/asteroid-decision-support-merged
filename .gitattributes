@@ -1,0 +1,4 @@
+*.fits binary
+*.joblib binary
+*.png binary
+*.gif binary
