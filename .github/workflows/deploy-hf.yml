@@ -1,0 +1,56 @@
+name: Deploy to Hugging Face Space
+
+on:
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install Hugging Face Hub client
+        run: pip install "huggingface_hub>=0.30"
+
+      - name: Create/update Space
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          python - <<'PY'
+          import os
+          from huggingface_hub import HfApi
+
+          token = os.environ.get("HF_TOKEN")
+          if not token:
+              raise SystemExit("HF_TOKEN GitHub Actions secret is missing.")
+
+          repo_id = "balimyabaci/asteroid-decision-support-merged"
+          api = HfApi(token=token)
+          api.create_repo(
+              repo_id=repo_id,
+              repo_type="space",
+              space_sdk="gradio",
+              private=False,
+              exist_ok=True,
+          )
+          api.upload_folder(
+              repo_id=repo_id,
+              repo_type="space",
+              folder_path=".",
+              ignore_patterns=[
+                  ".git/*",
+                  ".github/*",
+                  "__pycache__/*",
+                  "*.pyc",
+              ],
+              commit_message="Deploy merged WZ53 + ML decision support system",
+          )
+          print(f"DEPLOYED https://huggingface.co/spaces/{repo_id}")
+          PY
